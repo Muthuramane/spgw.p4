@@ -1,0 +1,116 @@
+Notes on the SPGW pipeline as understood by NGIC implementation
+
+S1U packet handling (uplink, from UE to Internet)
+In a nutshell: GTPU decap, and filtering
+
+Next port = SGI
+
+- GTPU decap
+	- if (ipv4_hdr->dst_addr != app.s1u_ip) -> DROP
+	- if (udp_hdr->dst_port != UDP_PORT_GTPU) -> DROP
+	- if (gtpu_hdr->teid == 0 || gtpu_hdr->msgtype != GTP_GPDU)
+	- populate epc_metadata (not needed)
+	- Remove the GPTU hdr from the tunneled packet (IPv4 + UDP + GTPU) (Note: the ether header must be updated before tx.) -> done by fabric
+
+- SDF lookup and filtering
+	- 5-tuple match (inner packet) -> sdf_rule_id
+	- match sf_rule_id -> pcc_rule_id
+	- match pcc_rule_id -> set_pcc_info(pcc_rule_id, precedence, gate_status)
+		- on miss: If there is no matching pcc rule, hardcoding to 0 with gate-status 1 (pass traffic)
+
+- PCC gating
+	- if pcc_info.gate_status = 0 drop 
+
+- ADC lookup (ignored for demo)
+	- 2 stage match
+	- first ACL 5-tuple match, get adc_rule_id
+	- second exact match on IP addr (src or dst depending on direction, UL (dst) or DL (src) flow), get adc_rule_id (uint32)
+	- second match has higher priority
+	- match adc_rule_id -> pcc_info
+
+- PCC gating
+
+---
+
+SGI packet handling (downlink, from Internet to UE)
+
+In a nutshell: sdf and adc filter, metering, charging and encap gtpu.
+NGIC DP intercepts DNS packets and maintains association between IP addr and domain name for ADC filtering. We don't do that.
+
+
+ - SDF lookup & filtering (gating)
+ - ADC lookup/filtering (gating)
+ - Session info (bearer) lookup
+ 	- Bearer mapping seems to be based solely on the UE ip addr (dst addr for downlink packets)
+ 	- Match ip.dst_addr -> set_sess_info
+
+- GTPU encap
+	- Based on dl_sess_info
+
+
+-- 
+
+
+
+/** Meta data used for directing packets to cores */
+struct epc_meta_data {
+	/** pipeline output port ID */
+	uint32_t port_id;
+	/** UE IPv4 hash for load balancing */
+	uint32_t ue_ipv4_hash;
+	/** flag for DNS pkt */
+	uint32_t dns;
+	/** eNB IP from GTP-U */
+	uint32_t enb_ipv4;
+	/** Teid from GTP-U */
+	uint32_t teid;
+	/** DL Bearer Map key */
+	struct dl_bm_key key;
+};
+
+/** DL Bearer Map key for hash lookup */
+struct dl_bm_key {
+	/** Ue ip */
+	uint32_t ue_ipv4;
+	/** Rule id */
+	uint32_t rid;
+};
+
+struct pcc_id_precedence {
+	uint32_t pcc_id;		/* pcc rule id */
+	uint8_t precedence;		/* precedence */
+	uint8_t gate_status;	/* gate status */
+
+
+/**
+ * Policy and Charging Control structure for DP
+ */
+struct pcc_rules {
+	uint32_t rule_id;			/* Rule ID*/
+	char rule_name[MAX_LEN];		/* Rule Name*/
+	uint32_t rating_group;			/* Group rating*/
+	uint32_t service_id;			/* identifier for the service or the service component
+						             * the service data flow relates to.*/
+	uint8_t rule_status;			/* Rule Status*/
+	uint8_t  gate_status;			/* gate status indicates whether the service data flow,
+						 * detected by the service data flow filter(s),
+						 * may pass or shall be discarded*/
+	uint8_t  session_cont;			/* Total Session Count*/
+	uint8_t  report_level;			/* Level of report*/
+	uint32_t  monitoring_key;		/* key to identify monitor control instance that shall
+						 * be used for usage monitoring control of the service
+						 * data flows controlled*/
+	char sponsor_id[MAX_LEN];		/* to identify the 3rd party organization (the
+						 * sponsor) willing to pay for the operator's charge*/
+	struct  redirect_info redirect_info;	/* Redirect  info*/
+	uint32_t precedence;			/* Precedence*/
+	uint64_t drop_pkt_count;		/* Drop count*/
+	int32_t adc_idx;
+	uint32_t sdf_idx_cnt;
+	uint32_t sdf_idx[MAX_SDF_IDX_COUNT];
+	struct qos_info qos;			/* QoS Parameters*/
+	uint8_t  charging_mode;			/* online and offline charging*/
+	uint8_t  metering_method;		/* Metering Methods
+						 * -fwd, srtcm, trtcm*/
+	uint8_t  mute_notify;			/* Mute on/off*/
+} __attribute__((packed, aligned(RTE_CACHE_LINE_SIZE)));
