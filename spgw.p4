@@ -12,6 +12,9 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Authors:
+ *     Carmelo Cascone <carmelo@opennetworking.org>
  */
 
 #include <core.p4>
@@ -22,12 +25,11 @@
 #define UDP_HDR_SIZE 8
 #define ETH_TYPE_IPV4 0x0800
 #define IP_VERSION_4 0x4
+#define IPV4_MIN_IHL 0x5
+#define IPV4_MAX_TTL 64
 #define IP_PROTO_TCP 8w6
 #define IP_PROTO_UDP 8w17
 
-typedef bit<9> port_t;
-
-// GTPU
 #define UDP_PORT_GTPU 2152
 #define GTP_GPDU 0xff
 #define GTPU_VERSION 0x01
@@ -41,8 +43,8 @@ typedef bit<32> pcc_rule_id_t;
 const sdf_rule_id_t DEFAULT_SDF_RULE_ID = 0;
 const pcc_rule_id_t DEFAULT_PCC_RULE_ID = 0;
 
-const direction_t DIRECTION_UL = 1w0;
-const direction_t DIRECTION_DL = 1w1;
+const direction_t DIR_UPLINK = 1w0;
+const direction_t DIR_DOWNLINK = 1w1;
 
 const pcc_gate_status_t PCC_GATE_OPEN = 1w0;
 const pcc_gate_status_t PCC_GATE_CLOSED = 1w1;
@@ -51,50 +53,7 @@ const pcc_gate_status_t PCC_GATE_CLOSED = 1w1;
 // HEADERS
 //------------------------------------------------------------------------------
 
-header ethernet_t {
-    bit<48> dst_addr;
-    bit<48> src_addr;
-    bit<16> ether_type;
-}
-
-header ipv4_t {
-    bit<4>  version;
-    bit<4>  ihl;
-    bit<6>  dscp;
-    bit<2>  ecn;
-    bit<16> len;
-    bit<16> identification;
-    bit<3>  flags;
-    bit<13> frag_offset;
-    bit<8>  ttl;
-    bit<8>  protocol;
-    bit<16> hdr_checksum;
-    bit<32> src_addr;
-    bit<32> dst_addr;
-}
-
-header tcp_t {
-    bit<16> src_port;
-    bit<16> dst_port;
-    bit<32> seq_no;
-    bit<32> ack_no;
-    bit<4>  data_offset;
-    bit<3>  res;
-    bit<3>  ecn;
-    bit<6>  ctrl;
-    bit<16> window;
-    bit<16> checksum;
-    bit<16> urgent_ptr;
-}
-
-header udp_t {
-    bit<16> src_port;
-    bit<16> dst_port;
-    bit<16> length_;
-    bit<16> checksum;
-}
-
-/* GTPU v1: https://en.wikipedia.org/wiki/GPRS_Tunnelling_Protocol#GTP_version_1 */
+// GTPU v1
 header gtpu_t {
     bit<3>  version;    /* version */
     bit<1>  pt;         /* protocol type */
@@ -115,38 +74,36 @@ header gtpu_t {
 //     bit<8>  ex_type;  /* Next extension header type */
 // }
 
-struct local_metadata_t {
-    bit<16> l4_src_port;
-    bit<16> l4_dst_port;
-    // SPGW specific
-    direction_t direction;
+struct spgw_meta_t {
+    bit<16>           l4_src_port;
+    bit<16>           l4_dst_port;
+    direction_t       direction;
     pcc_gate_status_t pcc_gate_status;
-    sdf_rule_id_t sdf_rule_id;
-    pcc_rule_id_t pcc_rule_id;
-    bit<32> dl_sess_teid;
-    bit<32> dl_sess_enb_addr;
-    bit<32> dl_sess_s1u_addr;
+    sdf_rule_id_t     sdf_rule_id;
+    pcc_rule_id_t     pcc_rule_id;
+    bit<32>           dl_sess_teid;
+    bit<32>           dl_sess_enb_addr;
+    bit<32>           dl_sess_s1u_addr;
 
 }
 
-struct headers_t {
+struct spgw_headers_t {
     ethernet_t ethernet;
-    ipv4_t ipv4;
-    tcp_t tcp;
-    udp_t udp;
-    gtpu_t gtpu;
-    ipv4_t ipv4_outer;
-    udp_t udp_outer;
+    ipv4_t     gtpu_ipv4;
+    udp_t      gtpu_udp;
+    gtpu_t     gtpu;
+    ipv4_t     ipv4;
+    tcp_t      tcp;
+    udp_t      udp;
 }
 
 //------------------------------------------------------------------------------
 // PARSER
 //------------------------------------------------------------------------------
 
-parser parser_impl(packet_in packet,
-                  out headers_t hdr,
-                  inout local_metadata_t local_metadata,
-                  inout standard_metadata_t standard_metadata) {
+parser spgw_parser_impl(packet_in packet,
+                        out spgw_headers_t hdr,
+                        inout spgw_meta_t spgw_meta) {
 
     state start {
         transition parse_ethernet;
@@ -171,15 +128,15 @@ parser parser_impl(packet_in packet,
 
     state parse_tcp {
         packet.extract(hdr.tcp);
-        local_metadata.l4_src_port = hdr.tcp.src_port;
-        local_metadata.l4_dst_port = hdr.tcp.dst_port;
+        spgw_meta.l4_src_port = hdr.tcp.src_port;
+        spgw_meta.l4_dst_port = hdr.tcp.dst_port;
         transition accept;
     }
 
     state parse_udp {
         packet.extract(hdr.udp);
-        local_metadata.l4_src_port = hdr.udp.src_port;
-        local_metadata.l4_dst_port = hdr.udp.dst_port;
+        spgw_meta.l4_src_port = hdr.udp.src_port;
+        spgw_meta.l4_dst_port = hdr.udp.dst_port;
         transition select(hdr.udp.dst_port) {
             UDP_PORT_GTPU: parse_gtpu;
             default: accept;
@@ -192,7 +149,7 @@ parser parser_impl(packet_in packet,
     }
 
     state parse_ipv4_inner {
-        hdr.ipv4_outer = hdr.ipv4;
+        hdr.gtpu_ipv4 = hdr.ipv4;
         packet.extract(hdr.ipv4);
         transition select(hdr.ipv4.protocol) {
             IP_PROTO_TCP: parse_tcp;
@@ -202,10 +159,10 @@ parser parser_impl(packet_in packet,
     }
 
     state parse_udp_inner {
-        hdr.udp_outer = hdr.udp;
+        hdr.gtpu_udp = hdr.udp;
         packet.extract(hdr.udp);
-        local_metadata.l4_src_port = hdr.udp.src_port;
-        local_metadata.l4_dst_port = hdr.udp.dst_port;
+        spgw_meta.l4_src_port = hdr.udp.src_port;
+        spgw_meta.l4_dst_port = hdr.udp.dst_port;
         transition accept;
     }
 }
@@ -214,9 +171,55 @@ parser parser_impl(packet_in packet,
 // INGRESS PIPELINE
 //------------------------------------------------------------------------------
 
-control ingress_impl(inout headers_t hdr,
-                     inout local_metadata_t local_metadata,
-                     inout standard_metadata_t standard_metadata) {
+/**
+ * Check if a packet has to be processed by the SPGW pipeline (do_spgw) and sets
+ * the direction of processing (spgw_meta.direction).
+ */
+control spgw_checkin(in spgw_headers_t hdr,
+                     inout spgw_meta_t spgw_meta,
+                     out bool do_spgw) {
+
+    table ue_filter_table {
+        key = {
+            /**
+             * IP prefixes of the UEs managed by this switch.
+             */
+            hdr.ipv4.dst_addr : lpm;
+        }
+        actions = {  }
+    }
+
+    table s1u_filter_table {
+        key = {
+            /**
+             * IP addresses of the S1U interfaces embodied by this switch.
+             */
+            hdr.gtpu_ipv4.dst_addr : exact;
+        }
+        actions = {  }
+    }
+
+    apply {
+        do_spgw = false;
+        if (hdr.gtpu.isValid() && hdr.gtpu.msgtype == GTP_GPDU) {
+            spgw_meta.direction = DIR_UPLINK;
+            if (s1u_filter_table.apply().hit) {
+                do_spgw = true;
+            }
+        } else {
+            if (ue_filter_table.apply().hit) {
+                do_spgw = true;
+            }
+        }
+    }
+}
+
+/**
+ * SPGW pipeline processing.
+ */
+control spgw_pipeline(inout spgw_headers_t hdr,
+                      inout spgw_meta_t spgw_meta,
+                      in standard_metadata_t std_meta) {
 
     direct_counter(CounterType.packets_and_bytes) ue_counter;
 
@@ -229,53 +232,56 @@ control ingress_impl(inout headers_t hdr,
         hdr.gtpu.seq_flag = 0;
         hdr.gtpu.npdu_flag = 0;
         hdr.gtpu.msgtype = GTP_GPDU;
-        hdr.gtpu.msglen = (bit<16>) (standard_metadata.packet_length - ETH_HDR_SIZE);
-        hdr.gtpu.teid = local_metadata.dl_sess_teid;
+        hdr.gtpu.msglen = (bit<16>) (std_meta.packet_length - ETH_HDR_SIZE);
+        hdr.gtpu.teid = spgw_meta.dl_sess_teid;
 
-        hdr.ipv4_outer.setValid();
-        hdr.ipv4.version = IP_VERSION_4;
-        hdr.ipv4.ihl = 0x5;
-        hdr.ipv4.dscp = 0;
-        hdr.ipv4.ecn = 0;
-        hdr.ipv4.len = hdr.gtpu.msglen + (bit<16>) (IPV4_HDR_SIZE + UDP_HDR_SIZE);
-        hdr.ipv4.identification = 0x1513;
-        hdr.ipv4.flags = 0;
-        hdr.ipv4.frag_offset = 0;
-        hdr.ipv4.ttl = 64;
-        hdr.ipv4.protocol = IP_PROTO_UDP;
-        hdr.ipv4.dst_addr = local_metadata.dl_sess_enb_addr;
-        hdr.ipv4.src_addr = local_metadata.dl_sess_s1u_addr;
+        hdr.gtpu_ipv4.setValid();
+        hdr.gtpu_ipv4.version = IP_VERSION_4;
+        hdr.gtpu_ipv4.ihl = IPV4_MIN_IHL;
+        hdr.gtpu_ipv4.diffserv = 0;
+        hdr.gtpu_ipv4.total_len = (bit<16>) (std_meta.packet_length
+            - ETH_HDR_SIZE + IPV4_HDR_SIZE + UDP_HDR_SIZE);
+        hdr.gtpu_ipv4.identification = 0x1513; /* From NGIC */
+        hdr.gtpu_ipv4.flags = 0;
+        hdr.gtpu_ipv4.frag_offset = 0;
+        hdr.gtpu_ipv4.ttl = IPV4_MAX_TTL;
+        hdr.gtpu_ipv4.protocol = IP_PROTO_UDP;
+        hdr.gtpu_ipv4.dst_addr = spgw_meta.dl_sess_enb_addr;
+        hdr.gtpu_ipv4.src_addr = spgw_meta.dl_sess_s1u_addr;
+        hdr.gtpu_ipv4.hdr_checksum = 0; /* Updated later */
 
-        hdr.udp_outer.setValid();
-        hdr.udp_outer.src_port = UDP_PORT_GTPU;
-        hdr.udp_outer.dst_port = UDP_PORT_GTPU;
-        hdr.udp_outer.length_ = hdr.gtpu.msglen + (bit<16>) UDP_HDR_SIZE;
+        hdr.gtpu_udp.setValid();
+        hdr.gtpu_udp.src_port = UDP_PORT_GTPU;
+        hdr.gtpu_udp.dst_port = UDP_PORT_GTPU;
+        hdr.gtpu_udp.len = (bit<16>) (std_meta.packet_length
+            - ETH_HDR_SIZE + UDP_HDR_SIZE);
+        hdr.gtpu_udp.checksum = 0; /* Ignore, won't be updated */
     }
 
     action gtpu_decap() {
-        hdr.ipv4_outer.setInvalid();
-        hdr.udp_outer.setInvalid();
+        hdr.gtpu_ipv4.setInvalid();
+        hdr.gtpu_udp.setInvalid();
         hdr.gtpu.setInvalid();
     }
 
     action set_sdf_rule_id(sdf_rule_id_t id) {
-        local_metadata.sdf_rule_id = id;
+        spgw_meta.sdf_rule_id = id;
     }
 
     action set_pcc_rule_id(pcc_rule_id_t id) {
-        local_metadata.pcc_rule_id = id;
+        spgw_meta.pcc_rule_id = id;
     }
 
     action set_pcc_info(pcc_gate_status_t gate_status) {
-        local_metadata.pcc_gate_status = gate_status;
+        spgw_meta.pcc_gate_status = gate_status;
     }
 
     action set_dl_sess_info(bit<32> dl_sess_teid,
                             bit<32> dl_sess_enb_addr,
                             bit<32> dl_sess_s1u_addr) {
-        local_metadata.dl_sess_teid = dl_sess_teid;
-        local_metadata.dl_sess_enb_addr = dl_sess_enb_addr;
-        local_metadata.dl_sess_s1u_addr = dl_sess_s1u_addr;
+        spgw_meta.dl_sess_teid = dl_sess_teid;
+        spgw_meta.dl_sess_enb_addr = dl_sess_enb_addr;
+        spgw_meta.dl_sess_s1u_addr = dl_sess_s1u_addr;
     }
 
     action update_ue_cdr() {
@@ -284,12 +290,12 @@ control ingress_impl(inout headers_t hdr,
 
     table sdf_rule_lookup {
         key = {
-            local_metadata.direction       : exact;
-            hdr.ipv4.src_addr              : ternary;
-            hdr.ipv4.dst_addr              : ternary;
-            hdr.ipv4.protocol              : ternary;
-            local_metadata.l4_src_port     : ternary;
-            local_metadata.l4_dst_port     : ternary;
+            spgw_meta.direction   : exact;
+            hdr.ipv4.src_addr     : ternary;
+            hdr.ipv4.dst_addr     : ternary;
+            hdr.ipv4.protocol     : ternary;
+            spgw_meta.l4_src_port : ternary;
+            spgw_meta.l4_dst_port : ternary;
         }
         actions = {
             set_sdf_rule_id();
@@ -299,7 +305,7 @@ control ingress_impl(inout headers_t hdr,
 
     table pcc_rule_lookup {
         key = {
-            local_metadata.sdf_rule_id : exact;
+            spgw_meta.sdf_rule_id : exact;
         }
         actions = {
             set_pcc_rule_id();
@@ -309,7 +315,7 @@ control ingress_impl(inout headers_t hdr,
 
     table pcc_info_lookup {
         key = {
-            local_metadata.pcc_rule_id : exact;
+            spgw_meta.pcc_rule_id : exact;
         }
         actions = {
             set_pcc_info();
@@ -337,31 +343,27 @@ control ingress_impl(inout headers_t hdr,
     }
 
     apply {
-        local_metadata.direction = hdr.gtpu.isValid()
-            ? DIRECTION_UL : DIRECTION_DL;
 
-        if (local_metadata.direction == DIRECTION_UL) {
-            /* TODO: check gtpu fields, drop if 
-                (ipv4.dst_addr != s1u_ip)
-                || (udp.dst_port != UDP_PORT_GTPU)
-                || (gtpu.teid == 0 || gtpu.msgtype != GTP_GPDU)
-            */
+        if (spgw_meta.direction == DIR_UPLINK) {
             gtpu_decap();
         }
-
-        local_metadata.pcc_gate_status = PCC_GATE_OPEN;
+        
+        // Allow all traffic by default.
+        spgw_meta.pcc_gate_status = PCC_GATE_OPEN;
 
         sdf_rule_lookup.apply();
         pcc_rule_lookup.apply();
         pcc_info_lookup.apply();
 
-        if (local_metadata.pcc_gate_status == PCC_GATE_CLOSED) {
+        if (spgw_meta.pcc_gate_status == PCC_GATE_CLOSED) {
             mark_to_drop();
             exit;
         }
 
-        if (local_metadata.direction == DIRECTION_DL) {
+        if (spgw_meta.direction == DIR_DOWNLINK) {
             if (!dl_sess_lookup.apply().hit) {
+                /* We have no other choice than drop, as we miss the session
+                   info necessary to properly GTPU encap the packet. */
                 mark_to_drop();
                 exit;
             }
@@ -372,38 +374,57 @@ control ingress_impl(inout headers_t hdr,
 }
 
 //------------------------------------------------------------------------------
-// EGRESS PIPELINE
-//------------------------------------------------------------------------------
-
-control egress_impl(inout headers_t hdr,
-                    inout local_metadata_t local_metadata,
-                    inout standard_metadata_t standard_metadata) {
-    apply {
-        /*
-        Nothing to do on the egress pipeline.
-        */
-    }
-}
-
-//------------------------------------------------------------------------------
 // CHECKSUM HANDLING
 //------------------------------------------------------------------------------
 
-control verify_checksum_impl(inout headers_t hdr,
-                             inout local_metadata_t local_metadata) {
+/**
+ * Verifies outer GTPU IPv4 checksum.
+ */
+control verify_gtpu_checksum(inout spgw_headers_t hdr) {
     apply {
-        /*
-        Nothing to do here, we assume checksum is always correct.
-        */
+        verify_checksum(hdr.gtpu_ipv4.isValid(),
+            {
+                hdr.ipv4.version,
+                hdr.ipv4.ihl,
+                hdr.ipv4.diffserv,
+                hdr.ipv4.total_len,
+                hdr.ipv4.identification,
+                hdr.ipv4.flags,
+                hdr.ipv4.frag_offset,
+                hdr.ipv4.ttl,
+                hdr.ipv4.protocol,
+                hdr.ipv4.src_addr,
+                hdr.ipv4.dst_addr
+            },
+            hdr.gtpu_ipv4.hdr_checksum,
+            HashAlgorithm.csum16
+        );
     }
 }
 
-control compute_checksum_impl(inout headers_t hdr,
-                              inout local_metadata_t local_metadata) {
+/**
+ * Updates outer GTPU IPv4 checksum.
+ */
+control compute_gtpu_checksum(inout spgw_headers_t hdr) {
     apply {
-        /*
-        TODO compute checksum for outer ip and udp headers.
-        */
+        // Compute outer IPv4 checksum.
+        update_checksum(hdr.gtpu_ipv4.isValid(),
+            {
+                hdr.ipv4.version,
+                hdr.ipv4.ihl,
+                hdr.ipv4.diffserv,
+                hdr.ipv4.total_len,
+                hdr.ipv4.identification,
+                hdr.ipv4.flags,
+                hdr.ipv4.frag_offset,
+                hdr.ipv4.ttl,
+                hdr.ipv4.protocol,
+                hdr.ipv4.src_addr,
+                hdr.ipv4.dst_addr
+            },
+            hdr.gtpu_ipv4.hdr_checksum,
+            HashAlgorithm.csum16
+        );
     }
 }
 
@@ -411,25 +432,17 @@ control compute_checksum_impl(inout headers_t hdr,
 // DEPARSER
 //------------------------------------------------------------------------------
 
-control deparser_impl(packet_out packet, in headers_t hdr) {
+/**
+ * Emits packet L2-L4 headers, including the GTPU ones.
+ */
+control spgw_deparser(packet_out packet, in spgw_headers_t hdr) {
     apply {
         packet.emit(hdr.ethernet);
-        packet.emit(hdr.ipv4_outer);
-        packet.emit(hdr.udp_outer);
+        packet.emit(hdr.gtpu_ipv4);
+        packet.emit(hdr.gtpu_udp);
         packet.emit(hdr.gtpu);
         packet.emit(hdr.ipv4);
         packet.emit(hdr.tcp);
         packet.emit(hdr.udp);
     }
 }
-
-//------------------------------------------------------------------------------
-// SWITCH INSTANTIATION
-//------------------------------------------------------------------------------
-
-V1Switch(parser_impl(),
-         verify_checksum_impl(),
-         ingress_impl(),
-         egress_impl(),
-         compute_checksum_impl(),
-         deparser_impl()) main;

@@ -1,9 +1,9 @@
-all: spgw
+all: main
 
-spgw: spgw.p4
-	p4c-bm2-ss -o p4c-out/bmv2/spgw.json \
-		--p4runtime-file p4c-out/bmv2/spgw.p4info \
-		--p4runtime-format text spgw.p4
+main: main.p4
+	p4c-bm2-ss -o p4c-out/bmv2/main.json \
+		--p4runtime-file p4c-out/bmv2/main.p4info \
+		--p4runtime-format text main.p4
 
 clean:
 	rm -rf p4c-out/bmv2/*.json
