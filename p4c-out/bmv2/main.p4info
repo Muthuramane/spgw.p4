@@ -1,0 +1,260 @@
+tables {
+  preamble {
+    id: 33583991
+    name: "spgw_checkin.ue_filter_table"
+    alias: "ue_filter_table"
+  }
+  match_fields {
+    id: 1
+    name: "hdr.ipv4.dst_addr"
+    bitwidth: 32
+    match_type: LPM
+  }
+  action_refs {
+    id: 16800567
+    annotations: "@defaultonly()"
+  }
+  size: 1024
+}
+tables {
+  preamble {
+    id: 33579595
+    name: "spgw_checkin.s1u_filter_table"
+    alias: "s1u_filter_table"
+  }
+  match_fields {
+    id: 1
+    name: "hdr.gtpu_ipv4.dst_addr"
+    bitwidth: 32
+    match_type: EXACT
+  }
+  action_refs {
+    id: 16800567
+    annotations: "@defaultonly()"
+  }
+  size: 1024
+}
+tables {
+  preamble {
+    id: 33554806
+    name: "spgw_pipeline.sdf_rule_lookup"
+    alias: "sdf_rule_lookup"
+  }
+  match_fields {
+    id: 1
+    name: "spgw_meta.direction"
+    bitwidth: 1
+    match_type: EXACT
+  }
+  match_fields {
+    id: 2
+    name: "hdr.ipv4.src_addr"
+    bitwidth: 32
+    match_type: TERNARY
+  }
+  match_fields {
+    id: 3
+    name: "hdr.ipv4.dst_addr"
+    bitwidth: 32
+    match_type: TERNARY
+  }
+  match_fields {
+    id: 4
+    name: "hdr.ipv4.protocol"
+    bitwidth: 8
+    match_type: TERNARY
+  }
+  match_fields {
+    id: 5
+    name: "spgw_meta.l4_src_port"
+    bitwidth: 16
+    match_type: TERNARY
+  }
+  match_fields {
+    id: 6
+    name: "spgw_meta.l4_dst_port"
+    bitwidth: 16
+    match_type: TERNARY
+  }
+  action_refs {
+    id: 16784052
+  }
+  const_default_action_id: 16784052
+  size: 1024
+}
+tables {
+  preamble {
+    id: 33560771
+    name: "spgw_pipeline.pcc_rule_lookup"
+    alias: "pcc_rule_lookup"
+  }
+  match_fields {
+    id: 1
+    name: "spgw_meta.sdf_rule_id"
+    bitwidth: 32
+    match_type: EXACT
+  }
+  action_refs {
+    id: 16811128
+  }
+  const_default_action_id: 16811128
+  size: 1024
+}
+tables {
+  preamble {
+    id: 33573423
+    name: "spgw_pipeline.pcc_info_lookup"
+    alias: "pcc_info_lookup"
+  }
+  match_fields {
+    id: 1
+    name: "spgw_meta.pcc_rule_id"
+    bitwidth: 32
+    match_type: EXACT
+  }
+  action_refs {
+    id: 16806715
+  }
+  const_default_action_id: 16806715
+  size: 1024
+}
+tables {
+  preamble {
+    id: 33565117
+    name: "spgw_pipeline.dl_sess_lookup"
+    alias: "dl_sess_lookup"
+  }
+  match_fields {
+    id: 1
+    name: "hdr.ipv4.dst_addr"
+    bitwidth: 32
+    match_type: EXACT
+  }
+  action_refs {
+    id: 16802865
+  }
+  action_refs {
+    id: 16800567
+    annotations: "@defaultonly()"
+  }
+  size: 1024
+}
+tables {
+  preamble {
+    id: 33605556
+    name: "spgw_pipeline.ue_cdr_table"
+    alias: "ue_cdr_table"
+  }
+  match_fields {
+    id: 1
+    name: "hdr.ipv4.dst_addr"
+    bitwidth: 32
+    match_type: EXACT
+  }
+  action_refs {
+    id: 16808295
+  }
+  action_refs {
+    id: 16800567
+    annotations: "@defaultonly()"
+  }
+  direct_resource_ids: 301989966
+  size: 1024
+}
+actions {
+  preamble {
+    id: 16800567
+    name: "NoAction"
+    alias: "NoAction"
+  }
+}
+actions {
+  preamble {
+    id: 16833836
+    name: "spgw_pipeline.gtpu_encap"
+    alias: "gtpu_encap"
+  }
+}
+actions {
+  preamble {
+    id: 16838533
+    name: "spgw_pipeline.gtpu_decap"
+    alias: "gtpu_decap"
+  }
+}
+actions {
+  preamble {
+    id: 16784052
+    name: "spgw_pipeline.set_sdf_rule_id"
+    alias: "set_sdf_rule_id"
+  }
+  params {
+    id: 1
+    name: "id"
+    bitwidth: 32
+  }
+}
+actions {
+  preamble {
+    id: 16811128
+    name: "spgw_pipeline.set_pcc_rule_id"
+    alias: "set_pcc_rule_id"
+  }
+  params {
+    id: 1
+    name: "id"
+    bitwidth: 32
+  }
+}
+actions {
+  preamble {
+    id: 16806715
+    name: "spgw_pipeline.set_pcc_info"
+    alias: "set_pcc_info"
+  }
+  params {
+    id: 1
+    name: "gate_status"
+    bitwidth: 1
+  }
+}
+actions {
+  preamble {
+    id: 16802865
+    name: "spgw_pipeline.set_dl_sess_info"
+    alias: "set_dl_sess_info"
+  }
+  params {
+    id: 1
+    name: "dl_sess_teid"
+    bitwidth: 32
+  }
+  params {
+    id: 2
+    name: "dl_sess_enb_addr"
+    bitwidth: 32
+  }
+  params {
+    id: 3
+    name: "dl_sess_s1u_addr"
+    bitwidth: 32
+  }
+}
+actions {
+  preamble {
+    id: 16808295
+    name: "spgw_pipeline.update_ue_cdr"
+    alias: "update_ue_cdr"
+  }
+}
+direct_counters {
+  preamble {
+    id: 301989966
+    name: "spgw_pipeline.ue_counter"
+    alias: "ue_counter"
+  }
+  spec {
+    unit: BOTH
+  }
+  direct_table_id: 33605556
+}
